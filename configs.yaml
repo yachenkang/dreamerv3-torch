@@ -1,6 +1,6 @@
 defaults:
 
-  logdir: null
+  logdir: 'logdir/dmc_walker_walk'
   traindir: null
   evaldir: null
   offline_traindir: ''
@@ -28,6 +28,8 @@ defaults:
   grayscale: False
   prefill: 2500
   reward_EMA: True
+
+  group: '1'
 
   # Model
   dyn_hidden: 512

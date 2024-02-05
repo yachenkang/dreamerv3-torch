@@ -21,6 +21,8 @@ import torch
 from torch import nn
 from torch import distributions as torchd
 
+import wandb
+import datetime
 
 to_np = lambda x: x.detach().cpu().numpy()
 
@@ -207,13 +209,23 @@ def main(config):
     tools.set_seed_everywhere(config.seed)
     if config.deterministic_run:
         tools.enable_deterministic_run()
-    logdir = pathlib.Path(config.logdir).expanduser()
+    date = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    name = 'dmc'+f'_{date}'
+    logdir = pathlib.Path(config.logdir+'/'+name).expanduser()
     config.traindir = config.traindir or logdir / "train_eps"
     config.evaldir = config.evaldir or logdir / "eval_eps"
     config.steps //= config.action_repeat
     config.eval_every //= config.action_repeat
     config.log_every //= config.action_repeat
     config.time_limit //= config.action_repeat
+
+    wandb.init(
+        project="mfhmb",
+        sync_tensorboard=True,
+        name=name,
+        group=config.group,
+        config=config,
+        )
 
     print("Logdir", logdir)
     logdir.mkdir(parents=True, exist_ok=True)
