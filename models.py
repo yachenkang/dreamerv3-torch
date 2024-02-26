@@ -579,13 +579,15 @@ class Behavior(nn.Module):
                 state = None
                 done = True
             else:
-                state, _, _, obs, _, done = prev
-            if done:
-                obs = self._env.reset()
+                state, _, _, = prev
             if state is None:
                 latent = action = None
             else:
                 latent, action = state
+            obs = latent['obs']
+            done = latent['done']
+            if done:
+                obs = self._env.reset()
             obs = self._world_model.preprocess(obs)
             embed = self._world_model.encoder(obs)
             latent, _ = self._world_model.dynamics.obs_step(latent, action, embed, obs["is_first"])
@@ -605,14 +607,18 @@ class Behavior(nn.Module):
                 action = torch.one_hot(
                     torch.argmax(action, dim=-1), self._config.num_actions
                 )
+            latent['obs'] = o
+            latent['reward'] = r
+            latent['done'] = d
             state = (latent, action)
             succ = state
-            return succ, feat, action, o, r, d
+            return succ, feat, action
 
-        succ, feats, actions, _, rewards = tools.static_scan(
+        succ, feats, actions = tools.static_scan(
             step, [torch.arange(horizon)], (start, None, None)
         )
         states = {k: torch.cat([start[k][None], v[:-1]], 0) for k, v in succ.items()}
+        rewards = states['reward']
 
         return feats, states, actions, rewards
 
