@@ -78,6 +78,7 @@ defaults:
   discount: 0.997
   discount_lambda: 0.95
   imag_horizon: 15
+  inter_horizon: 15
   imag_gradient: 'dynamics'
   imag_gradient_mix: 0.0
   eval_state_mean: False

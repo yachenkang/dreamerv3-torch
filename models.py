@@ -440,6 +440,7 @@ class Behavior(nn.Module):
         self._config = config
         self._world_model = world_model
         self._env = env
+        self.start = None
         if config.dyn_discrete:
             feat_size = config.dyn_stoch * config.dyn_discrete + config.dyn_deter
         else:
@@ -506,17 +507,19 @@ class Behavior(nn.Module):
 
     def _train(
         self,
-        start,
+        # start,
         # objective,
     ):
         self._update_slow_target()
         metrics = {}
+        start = self.start
 
         with tools.RequiresGrad(self.actor):
             with torch.cuda.amp.autocast(self._use_amp):
                 feat, state, action, obs, reward = self._interact(
                     start, self.actor, self._config.inter_horizon
                 )
+                self.start = state
                 # reward = objective(imag_feat, imag_state, imag_action)
                 actor_ent = self.actor(feat).entropy()
                 # state_ent = self._world_model.dynamics.get_dist(imag_state).entropy()
@@ -568,10 +571,17 @@ class Behavior(nn.Module):
     def _interact(self, start, policy, horizon):
         # dynamics = self._world_model.dynamics
         flatten = lambda x: x.reshape([-1] + list(x.shape[2:]))
-        start = {k: flatten(v) for k, v in start.items()}
+        if start is not None:
+            start = {k: flatten(v) for k, v in start.items()}
 
         def step(prev, _):
-            state, _, _, obs, _ = prev
+            if prev is None:
+                state = None
+                done = True
+            else:
+                state, _, _, obs, _, done = prev
+            if done:
+                obs = self._env.reset()
             if state is None:
                 latent = action = None
             else:
@@ -597,7 +607,7 @@ class Behavior(nn.Module):
                 )
             state = (latent, action)
             succ = state
-            return succ, feat, action, o, r
+            return succ, feat, action, o, r, d
 
         succ, feats, actions, _, rewards = tools.static_scan(
             step, [torch.arange(horizon)], (start, None, None)
