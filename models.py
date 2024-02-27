@@ -516,7 +516,7 @@ class Behavior(nn.Module):
 
         with tools.RequiresGrad(self.actor):
             with torch.cuda.amp.autocast(self._use_amp):
-                feat, state, action, obs, reward = self._interact(
+                feat, state, action, reward = self._interact(
                     start, self.actor, self._config.inter_horizon
                 )
                 self.start = state
@@ -525,7 +525,7 @@ class Behavior(nn.Module):
                 # state_ent = self._world_model.dynamics.get_dist(imag_state).entropy()
                 # this target is not scaled by ema or sym_log.
                 target, weights, base = self._compute_target(
-                    feat, state, obs, reward
+                    feat, state, reward
                 )
                 actor_loss, mets = self._compute_actor_loss(
                     feat,
@@ -575,25 +575,19 @@ class Behavior(nn.Module):
             start = {k: flatten(v) for k, v in start.items()}
 
         def step(prev, _):
-            if prev is None:
-                state = None
-                done = True
-            else:
-                state, _, action, obs, done = prev
+            state, _, action = prev
             if state is None:
                 latent = action = None
                 done = True
             else:
                 latent = state
-                obs = latent['obs']
-                done = latent['done']
             if done:
                 result = self._env.reset()
                 obs = result()
-            obs = {k: np.stack([obs[k]]) for k in obs if "log_" not in k}
-            obs = self._world_model.preprocess(obs)
-            embed = self._world_model.encoder(obs)
-            latent, _ = self._world_model.dynamics.obs_step(latent, action, embed, obs["is_first"])
+                obs = {k: np.stack([obs[k]]) for k in obs if "log_" not in k}
+                obs = self._world_model.preprocess(obs)
+                embed = self._world_model.encoder(obs)
+                latent, _ = self._world_model.dynamics.obs_step(latent, action, embed, obs["is_first"])
             if self._config.eval_state_mean:
                 latent["stoch"] = latent["mean"]
             feat = self._world_model.dynamics.get_feat(latent)
@@ -616,29 +610,35 @@ class Behavior(nn.Module):
             o, r, d, info = results()
             o = {k: tools.convert(v) for k, v in o.items()}
             o["discount"] = info.get("discount", np.array(1 - float(d)))
+            obs = o
+            obs = {k: np.stack([obs[k]]) for k in obs if "log_" not in k}
+            obs = self._world_model.preprocess(obs)
+            embed = self._world_model.encoder(obs)
+            latent, _ = self._world_model.dynamics.obs_step(latent, action, embed, obs["is_first"])
             # embed = self._world_model.encoder(obs)
             # latent = {k: v.detach() for k, v in latent.items()}
             # latent['obs'] = o
             latent['reward'] = r
+            latent['discount'] = obs['discount']
             # latent['done'] = d
             succ = latent
-            return succ, feat, action, o, d
+            return succ, feat, action
 
-        succ, feats, actions, obs, _ = tools.static_scan(
+        succ, feats, actions = tools.static_scan(
             step, [torch.arange(horizon)], (start, None, None)
         )
         states = {k: torch.cat([start[k][None], v[:-1]], 0) for k, v in succ.items()}
         rewards = states['reward']
 
-        return feats, states, actions, obs, rewards
+        return feats, states, actions, rewards
 
-    def _compute_target(self, feat, state, obs, reward):
+    def _compute_target(self, feat, state, reward):
         # if "cont" in self._world_model.heads:
         #     inp = self._world_model.dynamics.get_feat(imag_state)
         #     discount = self._config.discount * self._world_model.heads["cont"](inp).mean
         # else:
         #     discount = self._config.discount * torch.ones_like(reward)
-        discount = obs["discount"]
+        discount = state['discount']
         value = self.value(feat).mode()
         target = tools.lambda_return(
             reward[1:],
