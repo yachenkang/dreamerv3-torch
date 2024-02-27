@@ -175,7 +175,7 @@ class WorldModel(nn.Module):
     # this function is called during both rollout and training
     def preprocess(self, obs):
         obs = obs.copy()
-        obs["image"] = torch.Tensor(obs["image"]) / 255.0
+        obs["image"] = torch.Tensor(obs["image"].copy()) / 255.0
         if "discount" in obs:
             obs["discount"] *= self._config.discount
             # (batch_size, batch_length) -> (batch_size, batch_length, 1)
@@ -439,7 +439,7 @@ class Behavior(nn.Module):
         self._use_amp = True if config.precision == 16 else False
         self._config = config
         self._world_model = world_model
-        self._env = env
+        self._env = env[0]
         self.start = None
         if config.dyn_discrete:
             feat_size = config.dyn_stoch * config.dyn_discrete + config.dyn_deter
@@ -579,15 +579,18 @@ class Behavior(nn.Module):
                 state = None
                 done = True
             else:
-                state, _, _, = prev
+                state, _, action, obs, done = prev
             if state is None:
                 latent = action = None
+                done = True
             else:
-                latent, action = state
-            obs = latent['obs']
-            done = latent['done']
+                latent = state
+                obs = latent['obs']
+                done = latent['done']
             if done:
-                obs = self._env.reset()
+                result = self._env.reset()
+                obs = result()
+            obs = {k: np.stack([obs[k]]) for k in obs if "log_" not in k}
             obs = self._world_model.preprocess(obs)
             embed = self._world_model.encoder(obs)
             latent, _ = self._world_model.dynamics.obs_step(latent, action, embed, obs["is_first"])
@@ -595,32 +598,39 @@ class Behavior(nn.Module):
                 latent["stoch"] = latent["mean"]
             feat = self._world_model.dynamics.get_feat(latent)
             inp = feat.detach()
-            action = policy(inp).sample()
-            results = self._env.step(action)
-            o, r, d, info = results
-            o = {k: tools.convert(v) for k, v in o.items()}
-            o["discount"] = info.get("discount", np.array(1 - float(d)))
-            # embed = self._world_model.encoder(obs)
-            # latent = {k: v.detach() for k, v in latent.items()}
+            actor = policy(inp)
+            action = actor.sample()
+            logprob = actor.log_prob(action)
+            latent = {k: v.detach() for k, v in latent.items()}
             action = action.detach()
             if self._config.actor["dist"] == "onehot_gumble":
                 action = torch.one_hot(
                     torch.argmax(action, dim=-1), self._config.num_actions
                 )
-            latent['obs'] = o
+            policy_output = {"action": action, "logprob": logprob}
+            if isinstance(policy_output, dict):
+                policy_output = {k: np.array(policy_output[k].detach().cpu()) for k in policy_output}
+            else:
+                policy_output = np.array(action)
+            results = self._env.step(policy_output)
+            o, r, d, info = results()
+            o = {k: tools.convert(v) for k, v in o.items()}
+            o["discount"] = info.get("discount", np.array(1 - float(d)))
+            # embed = self._world_model.encoder(obs)
+            # latent = {k: v.detach() for k, v in latent.items()}
+            # latent['obs'] = o
             latent['reward'] = r
-            latent['done'] = d
-            state = (latent, action)
-            succ = state
-            return succ, feat, action
+            # latent['done'] = d
+            succ = latent
+            return succ, feat, action, o, d
 
-        succ, feats, actions = tools.static_scan(
+        succ, feats, actions, obs, _ = tools.static_scan(
             step, [torch.arange(horizon)], (start, None, None)
         )
         states = {k: torch.cat([start[k][None], v[:-1]], 0) for k, v in succ.items()}
         rewards = states['reward']
 
-        return feats, states, actions, rewards
+        return feats, states, actions, obs, rewards
 
     def _compute_target(self, feat, state, obs, reward):
         # if "cont" in self._world_model.heads:

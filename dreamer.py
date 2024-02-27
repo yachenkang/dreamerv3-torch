@@ -250,7 +250,7 @@ def main(config):
     eval_eps = tools.load_episodes(directory, limit=1)
     make = lambda mode, id: make_env(config, mode, id)
     train_envs = [make("train", i) for i in range(config.envs)]
-    train_mf_envs = [make("train_mf", i) for i in range(config.envs)]
+    train_mf_envs = [make("train_mf", i) for i in range(1)]
     eval_envs = [make("eval", i) for i in range(config.envs)]
     if config.parallel:
         train_envs = [Parallel(env, "process") for env in train_envs]
