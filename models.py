@@ -440,7 +440,6 @@ class Behavior(nn.Module):
         self._config = config
         self._world_model = world_model
         self._env = env[0]
-        self.start = None
         if config.dyn_discrete:
             feat_size = config.dyn_stoch * config.dyn_discrete + config.dyn_deter
         else:
@@ -507,12 +506,11 @@ class Behavior(nn.Module):
 
     def _train(
         self,
-        # start,
+        start,
         # objective,
     ):
         self._update_slow_target()
         metrics = {}
-        start = self.start
 
         with tools.RequiresGrad(self.actor):
             with torch.cuda.amp.autocast(self._use_amp):
@@ -571,8 +569,7 @@ class Behavior(nn.Module):
     def _interact(self, start, policy, horizon):
         # dynamics = self._world_model.dynamics
         flatten = lambda x: x.reshape([-1] + list(x.shape[2:]))
-        if start is not None:
-            start = {k: flatten(v) for k, v in start.items()}
+        start = {k: flatten(v) for k, v in start.items()}
 
         def step(prev, _):
             state, _, action = prev
@@ -581,6 +578,7 @@ class Behavior(nn.Module):
                 done = True
             else:
                 latent = state
+                done = latent["done"].bool()
             if done:
                 result = self._env.reset()
                 obs = result()
@@ -618,7 +616,7 @@ class Behavior(nn.Module):
             # embed = self._world_model.encoder(obs)
             # latent = {k: v.detach() for k, v in latent.items()}
             # latent['obs'] = o
-            latent['reward'] = r
+            latent['reward'] = torch.Tensor(r).unsqueeze(-1)
             latent['discount'] = obs['discount']
             # latent['done'] = d
             succ = latent
