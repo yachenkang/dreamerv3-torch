@@ -136,6 +136,7 @@ def simulate(
     steps=0,
     episodes=0,
     state=None,
+    policy_name=None,
 ):
     # initialize or unpack simulation state
     if state is None:
@@ -233,12 +234,12 @@ def simulate(
 
                     score = sum(eval_scores) / len(eval_scores)
                     length = sum(eval_lengths) / len(eval_lengths)
-                    logger.video(f"eval_policy", np.array(video)[None])
+                    logger.video(policy_name + f"_eval_policy", np.array(video)[None])
 
                     if len(eval_scores) >= episodes and not eval_done:
-                        logger.scalar(f"eval_return", score)
-                        logger.scalar(f"eval_length", length)
-                        logger.scalar(f"eval_episodes", len(eval_scores))
+                        logger.scalar(policy_name + f"_eval_return", score)
+                        logger.scalar(policy_name + f"_eval_length", length)
+                        logger.scalar(policy_name + f"_eval_episodes", len(eval_scores))
                         logger.write(step=logger.step)
                         eval_done = True
     if is_eval:

@@ -58,7 +58,7 @@ class Dreamer(nn.Module):
             plan2explore=lambda: expl.Plan2Explore(config, self._wm, reward),
         )[config.expl_behavior]().to(self._config.device)
 
-    def __call__(self, obs, reset, state=None, training=True):
+    def __call__(self, obs, reset, state=None, training=True, online=False):
         step = self._step
         if training:
             steps = (
@@ -79,14 +79,14 @@ class Dreamer(nn.Module):
                     self._logger.video("train_openl", to_np(openl))
                 self._logger.write(fps=True)
 
-        policy_output, state = self._policy(obs, state, training)
+        policy_output, state = self._policy(obs, state, training, online)
 
         if training:
             self._step += len(reset)
             self._logger.step = self._config.action_repeat * self._step
         return policy_output, state
 
-    def _policy(self, obs, state, training):
+    def _policy(self, obs, state, training, online):
         if state is None:
             latent = action = None
         else:
@@ -103,8 +103,11 @@ class Dreamer(nn.Module):
         elif self._should_expl(self._step):
             actor = self._expl_behavior.actor(feat)
             action = actor.sample()
-        else:
+        elif not online:
             actor = self._task_behavior.actor(feat)
+            action = actor.sample()
+        else:
+            actor = self._online_behavior.actor(feat)
             action = actor.sample()
         logprob = actor.log_prob(action)
         latent = {k: v.detach() for k, v in latent.items()}
@@ -330,10 +333,22 @@ def main(config):
                 logger,
                 is_eval=True,
                 episodes=config.eval_episode_num,
+                policy_name="mb",
             )
             if config.video_pred_log:
                 video_pred = agent._wm.video_pred(next(eval_dataset))
                 logger.video("eval_openl", to_np(video_pred))
+            eval_policy = functools.partial(agent, training=False, online=True)
+            tools.simulate(
+                eval_policy,
+                eval_envs,
+                eval_eps,
+                config.evaldir,
+                logger,
+                is_eval=True,
+                episodes=config.eval_episode_num,
+                policy_name="mf",
+            )
         print("Start training.")
         state = tools.simulate(
             agent,
@@ -344,6 +359,7 @@ def main(config):
             limit=config.dataset_size,
             steps=config.eval_every,
             state=state,
+            policy_name="mb",
         )
         items_to_save = {
             "agent_state_dict": agent.state_dict(),
