@@ -573,11 +573,10 @@ class Behavior(nn.Module):
 
         def step(prev, _):
             state, _, action = prev
-            if state is None:
-                latent = action = None
+            latent = state
+            if "done" not in latent:
                 done = True
             else:
-                latent = state
                 done = latent["done"].bool()
             if done:
                 result = self._env.reset()
@@ -616,17 +615,19 @@ class Behavior(nn.Module):
             # embed = self._world_model.encoder(obs)
             # latent = {k: v.detach() for k, v in latent.items()}
             # latent['obs'] = o
-            latent['reward'] = torch.Tensor(r).unsqueeze(-1)
-            latent['discount'] = obs['discount']
-            # latent['done'] = d
+            latent['reward'] = torch.Tensor([r]).unsqueeze(-1).to(self._config.device)
+            latent['done'] = torch.Tensor([d]).unsqueeze(-1)
+            latent['discount'] = obs['discount'].to(self._config.device)
             succ = latent
             return succ, feat, action
 
         succ, feats, actions = tools.static_scan(
             step, [torch.arange(horizon)], (start, None, None)
         )
-        states = {k: torch.cat([start[k][None], v[:-1]], 0) for k, v in succ.items()}
-        rewards = states['reward']
+        succ.pop('done')
+        # states = {k: torch.cat([start[k][None], v[:-1]], 0) for k, v in succ.items()}
+        states = succ
+        rewards = states.pop('reward')
 
         return feats, states, actions, rewards
 
@@ -636,7 +637,7 @@ class Behavior(nn.Module):
         #     discount = self._config.discount * self._world_model.heads["cont"](inp).mean
         # else:
         #     discount = self._config.discount * torch.ones_like(reward)
-        discount = state['discount']
+        discount = state.pop('discount')
         value = self.value(feat).mode()
         target = tools.lambda_return(
             reward[1:],
