@@ -129,7 +129,7 @@ class Dreamer(nn.Module):
             self._wm.dynamics.get_feat(s)
         ).mode()
         metrics.update(self._task_behavior._train(start, reward)[-1])
-        metrics.update(self._online_behavior._train(start)[-1])
+        metrics.update(self._mf_behavior._train(start)[-1])
         if self._config.expl_behavior != "greedy":
             mets = self._expl_behavior.train(start, context, data)[-1]
             metrics.update({"expl_" + key: value for key, value in mets.items()})
@@ -284,7 +284,7 @@ def main(config):
                 1,
             )
 
-        def random_agent(o, d, s):
+        def random_agent(o, d, s, training, mf):
             action = random_actor.sample()
             logprob = random_actor.log_prob(action)
             return {"action": action, "logprob": logprob}, None
