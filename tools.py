@@ -137,6 +137,8 @@ def simulate(
     episodes=0,
     state=None,
     policy_name=None,
+    training = True,
+    mf = False,
 ):
     # initialize or unpack simulation state
     if state is None:
@@ -166,7 +168,7 @@ def simulate(
                 obs[index] = result
         # step agents
         obs = {k: np.stack([o[k] for o in obs]) for k in obs[0] if "log_" not in k}
-        action, agent_state = agent(obs, done, agent_state)
+        action, agent_state = agent(obs, done, agent_state, training=training, mf=mf)
         if isinstance(action, dict):
             action = [
                 {k: np.array(action[k][i].detach().cpu()) for k in action}

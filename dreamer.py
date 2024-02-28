@@ -44,7 +44,7 @@ class Dreamer(nn.Module):
         self._update_count = 0
         self._dataset = dataset
         self._wm = models.WorldModel(obs_space, act_space, self._step, config)
-        self._online_behavior = models.Behavior(config, self._wm, mf_envs)
+        self._mf_behavior = models.Behavior(config, self._wm, mf_envs)
         self._task_behavior = models.ImagBehavior(config, self._wm)
         if (
             config.compile and os.name != "nt"
@@ -58,7 +58,7 @@ class Dreamer(nn.Module):
             plan2explore=lambda: expl.Plan2Explore(config, self._wm, reward),
         )[config.expl_behavior]().to(self._config.device)
 
-    def __call__(self, obs, reset, state=None, training=True, online=False):
+    def __call__(self, obs, reset, state=None, training=True, mf=False):
         step = self._step
         if training:
             steps = (
@@ -79,14 +79,14 @@ class Dreamer(nn.Module):
                     self._logger.video("train_openl", to_np(openl))
                 self._logger.write(fps=True)
 
-        policy_output, state = self._policy(obs, state, training, online)
+        policy_output, state = self._policy(obs, state, training, mf)
 
         if training:
             self._step += len(reset)
             self._logger.step = self._config.action_repeat * self._step
         return policy_output, state
 
-    def _policy(self, obs, state, training, online):
+    def _policy(self, obs, state, training, mf):
         if state is None:
             latent = action = None
         else:
@@ -103,11 +103,11 @@ class Dreamer(nn.Module):
         elif self._should_expl(self._step):
             actor = self._expl_behavior.actor(feat)
             action = actor.sample()
-        elif not online:
+        elif not mf:
             actor = self._task_behavior.actor(feat)
             action = actor.sample()
         else:
-            actor = self._online_behavior.actor(feat)
+            actor = self._mf_behavior.actor(feat)
             action = actor.sample()
         logprob = actor.log_prob(action)
         latent = {k: v.detach() for k, v in latent.items()}
@@ -366,6 +366,19 @@ def main(config):
             "optims_state_dict": tools.recursively_collect_optim_state_dict(agent),
         }
         torch.save(items_to_save, logdir / "latest.pt")
+        tools.simulate(
+            agent,
+            train_envs,
+            train_eps,
+            config.traindir,
+            logger,
+            limit=config.dataset_size,
+            steps=config.eval_every,
+            state=None,
+            policy_name="mf",
+            training=False,
+            mf=True,
+        )
     for env in train_envs + eval_envs:
         try:
             env.close()
