@@ -434,12 +434,12 @@ class ImagBehavior(nn.Module):
             self._updates += 1
 
 class Behavior(nn.Module):
-    def __init__(self, config, world_model, env):
+    def __init__(self, config, world_model, dataset):
         super(Behavior, self).__init__()
         self._use_amp = True if config.precision == 16 else False
         self._config = config
         self._world_model = world_model
-        self._env = env[0]
+        self._dataset = dataset
         if config.dyn_discrete:
             feat_size = config.dyn_stoch * config.dyn_discrete + config.dyn_deter
         else:
@@ -478,7 +478,7 @@ class Behavior(nn.Module):
             self._updates = 0
         kw = dict(wd=config.weight_decay, opt=config.opt, use_amp=self._use_amp)
         self._actor_opt = tools.Optimizer(
-            "online_actor",
+            "mf_actor",
             self.actor.parameters(),
             config.actor["lr"],
             config.actor["eps"],
@@ -489,7 +489,7 @@ class Behavior(nn.Module):
             f"Optimizer actor_opt has {sum(param.numel() for param in self.actor.parameters())} variables."
         )
         self._value_opt = tools.Optimizer(
-            "online_value",
+            "mf_value",
             self.value.parameters(),
             config.critic["lr"],
             config.critic["eps"],
@@ -511,19 +511,20 @@ class Behavior(nn.Module):
     ):
         self._update_slow_target()
         metrics = {}
+        mf = "mf"
 
         with tools.RequiresGrad(self.actor):
             with torch.cuda.amp.autocast(self._use_amp):
-                feat, state, action, reward = self._interact(
-                    start, self.actor, self._config.inter_horizon
-                )
-                self.start = state
+                # feat, state, action, reward = self._interact(
+                #     start, self.actor, self._config.inter_horizon
+                # )
+                feat, state, action, reward, discount = self._data_sample(start)
                 # reward = objective(imag_feat, imag_state, imag_action)
                 actor_ent = self.actor(feat).entropy()
                 # state_ent = self._world_model.dynamics.get_dist(imag_state).entropy()
                 # this target is not scaled by ema or sym_log.
                 target, weights, base = self._compute_target(
-                    feat, state, reward
+                    feat, state, reward, discount
                 )
                 actor_loss, mets = self._compute_actor_loss(
                     feat,
@@ -549,18 +550,18 @@ class Behavior(nn.Module):
                 # (time, batch, 1), (time, batch, 1) -> (1,)
                 value_loss = torch.mean(weights[:-1] * value_loss[:, :, None])
 
-        metrics.update(tools.tensorstats(value.mode(), "online_value"))
-        metrics.update(tools.tensorstats(target, "online_target"))
-        metrics.update(tools.tensorstats(reward, "online_reward"))
+        metrics.update(tools.tensorstats(value.mode(), mf+"_value"))
+        metrics.update(tools.tensorstats(target, mf+"_target"))
+        metrics.update(tools.tensorstats(reward, mf+"_reward"))
         if self._config.actor["dist"] in ["onehot"]:
             metrics.update(
                 tools.tensorstats(
-                    torch.argmax(action, dim=-1).float(), "online_action"
+                    torch.argmax(action, dim=-1).float(), mf+"_action"
                 )
             )
         else:
-            metrics.update(tools.tensorstats(action, "online_action"))
-        metrics["online_actor_entropy"] = to_np(torch.mean(actor_ent))
+            metrics.update(tools.tensorstats(action, mf+"_action"))
+        metrics[mf+"_actor_entropy"] = to_np(torch.mean(actor_ent))
         with tools.RequiresGrad(self):
             metrics.update(self._actor_opt(actor_loss, self.actor.parameters()))
             metrics.update(self._value_opt(value_loss, self.value.parameters()))
@@ -631,13 +632,42 @@ class Behavior(nn.Module):
 
         return feats, states, actions, rewards
 
-    def _compute_target(self, feat, state, reward):
+    def _data_sample(self, start):
+        swap = lambda x: x.permute([1, 0] + list(range(2, len(x.shape))))
+        start = {k: v[:,0] for k, v in start.items()}
+        data = next(self._dataset)
+        data = self._world_model.preprocess(data)
+        rewards = data.pop('reward').unsqueeze(-1)
+        discount = data.pop('discount')
+        data = {k: swap(v) for k, v in data.items()}
+        action = data.pop('action')
+        embed = self._world_model.encoder(data)
+
+        def step(prev, _, embed, action, is_first):
+            state, _, _ = prev
+            latent = state
+            feat = self._world_model.dynamics.get_feat(latent)
+            succ, _ = self._world_model.dynamics.obs_step(latent, action, embed, is_first)
+            return succ, feat.detach(), action
+
+
+        # for i in range(self._config.batch_size):
+        succ, feats, actions = tools.static_scan(
+            step, [torch.arange(self._config.batch_length), embed, action, data['is_first']], (start, None, None)
+        )
+        states = {k: swap(v.detach()) for k, v in succ.items()}
+        feats = swap(feats)
+        actions = swap(actions)
+
+        return feats, states, actions, rewards, discount
+
+    def _compute_target(self, feat, state, reward, discount):
         # if "cont" in self._world_model.heads:
         #     inp = self._world_model.dynamics.get_feat(imag_state)
         #     discount = self._config.discount * self._world_model.heads["cont"](inp).mean
         # else:
         #     discount = self._config.discount * torch.ones_like(reward)
-        discount = state.pop('discount')
+        # discount = state.pop('discount')
         value = self.value(feat).mode()
         target = tools.lambda_return(
             reward[1:],

@@ -44,7 +44,7 @@ class Dreamer(nn.Module):
         self._update_count = 0
         self._dataset = dataset
         self._wm = models.WorldModel(obs_space, act_space, self._step, config)
-        self._mf_behavior = models.Behavior(config, self._wm, mf_envs)
+        self._mf_behavior = models.Behavior(config, self._wm, dataset)
         self._task_behavior = models.ImagBehavior(config, self._wm)
         if (
             config.compile and os.name != "nt"
@@ -338,7 +338,7 @@ def main(config):
             if config.video_pred_log:
                 video_pred = agent._wm.video_pred(next(eval_dataset))
                 logger.video("eval_openl", to_np(video_pred))
-            eval_policy = functools.partial(agent, training=False, online=True)
+            eval_policy = functools.partial(agent, training=False, mf=True)
             tools.simulate(
                 eval_policy,
                 eval_envs,
