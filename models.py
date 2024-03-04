@@ -507,6 +507,7 @@ class Behavior(nn.Module):
     def _train(
         self,
         start,
+        data,
         # objective,
     ):
         self._update_slow_target()
@@ -518,7 +519,7 @@ class Behavior(nn.Module):
                 # feat, state, action, reward = self._interact(
                 #     start, self.actor, self._config.inter_horizon
                 # )
-                feat, state, action, reward, discount = self._data_sample(start)
+                feat, state, action, reward, discount = self._data_sample(start, data)
                 # reward = objective(imag_feat, imag_state, imag_action)
                 actor_ent = self.actor(feat).entropy()
                 # state_ent = self._world_model.dynamics.get_dist(imag_state).entropy()
@@ -632,10 +633,10 @@ class Behavior(nn.Module):
 
         return feats, states, actions, rewards
 
-    def _data_sample(self, start):
+    def _data_sample(self, start, data):
         swap = lambda x: x.permute([1, 0] + list(range(2, len(x.shape))))
         start = {k: v[:,0] for k, v in start.items()}
-        data = next(self._dataset)
+        # data = next(self._dataset)
         data = self._world_model.preprocess(data)
         rewards = data.pop('reward').unsqueeze(-1)
         discount = data.pop('discount')
