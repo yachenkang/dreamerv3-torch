@@ -434,12 +434,12 @@ class ImagBehavior(nn.Module):
             self._updates += 1
 
 class Behavior(nn.Module):
-    def __init__(self, config, world_model, dataset):
+    def __init__(self, config, world_model):
         super(Behavior, self).__init__()
         self._use_amp = True if config.precision == 16 else False
         self._config = config
         self._world_model = world_model
-        self._dataset = dataset
+        # self._dataset = dataset
         if config.dyn_discrete:
             feat_size = config.dyn_stoch * config.dyn_discrete + config.dyn_deter
         else:
@@ -642,7 +642,7 @@ class Behavior(nn.Module):
         discount = data.pop('discount')
         data = {k: swap(v) for k, v in data.items()}
         action = data.pop('action')
-        embed = self._world_model.encoder(data)
+        embed = self._world_model.encoder(data).detach()
 
         def step(prev, _, embed, action, is_first):
             state, _, _ = prev

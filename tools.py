@@ -137,7 +137,7 @@ def simulate(
     episodes=0,
     state=None,
     policy_name=None,
-    training = True,
+    training = False,
     mf = False,
 ):
     # initialize or unpack simulation state

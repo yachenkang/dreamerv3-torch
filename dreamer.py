@@ -44,7 +44,7 @@ class Dreamer(nn.Module):
         self._update_count = 0
         self._dataset = dataset
         self._wm = models.WorldModel(obs_space, act_space, self._step, config)
-        self._mf_behavior = models.Behavior(config, self._wm, dataset)
+        self._mf_behavior = models.Behavior(config, self._wm)
         self._task_behavior = models.ImagBehavior(config, self._wm)
         if (
             config.compile and os.name != "nt"
@@ -67,7 +67,7 @@ class Dreamer(nn.Module):
                 else self._should_train(step)
             )
             for _ in range(steps):
-                self._train(next(self._dataset))
+                self._train(next(self._dataset), mf)
                 self._update_count += 1
                 self._metrics["update_count"] = self._update_count
             if self._should_log(step):
@@ -98,16 +98,19 @@ class Dreamer(nn.Module):
             latent["stoch"] = latent["mean"]
         feat = self._wm.dynamics.get_feat(latent)
         if not training:
-            actor = self._task_behavior.actor(feat)
+            if not mf:
+                actor = self._task_behavior.actor(feat)
+            else:
+                actor = self._mf_behavior.actor(feat)
             action = actor.mode()
         elif self._should_expl(self._step):
-            actor = self._expl_behavior.actor(feat)
-            action = actor.sample()
-        elif not mf:
-            actor = self._task_behavior.actor(feat)
+            if not mf:
+                actor = self._expl_behavior.actor(feat)
+            else:
+                actor = self._mf_behavior.actor(feat)
             action = actor.sample()
         else:
-            actor = self._mf_behavior.actor(feat)
+            actor = self._task_behavior.actor(feat)
             action = actor.sample()
         logprob = actor.log_prob(action)
         latent = {k: v.detach() for k, v in latent.items()}
@@ -120,7 +123,7 @@ class Dreamer(nn.Module):
         state = (latent, action)
         return policy_output, state
 
-    def _train(self, data):
+    def _train(self, data, mf):
         metrics = {}
         post, context, mets = self._wm._train(data)
         metrics.update(mets)
@@ -129,7 +132,7 @@ class Dreamer(nn.Module):
             self._wm.dynamics.get_feat(s)
         ).mode()
         metrics.update(self._task_behavior._train(start, reward)[-1])
-        metrics.update(self._mf_behavior._train(start, data)[-1])
+        # metrics.update(self._mf_behavior._train(start, data)[-1])
         if self._config.expl_behavior != "greedy":
             mets = self._expl_behavior.train(start, context, data)[-1]
             metrics.update({"expl_" + key: value for key, value in mets.items()})
@@ -348,6 +351,7 @@ def main(config):
                 is_eval=True,
                 episodes=config.eval_episode_num,
                 policy_name="mf",
+                mf=True,
             )
         print("Start training.")
         state = tools.simulate(
@@ -357,9 +361,10 @@ def main(config):
             config.traindir,
             logger,
             limit=config.dataset_size,
-            steps=config.eval_every,
+            steps=config.eval_every//2,
             state=state,
             policy_name="mb",
+            training=True,
         )
         items_to_save = {
             "agent_state_dict": agent.state_dict(),
@@ -373,10 +378,9 @@ def main(config):
             config.traindir,
             logger,
             limit=config.dataset_size,
-            steps=config.eval_every,
+            steps=config.eval_every//2,
             state=None,
             policy_name="mf",
-            training=False,
             mf=True,
         )
     for env in train_envs + eval_envs:
