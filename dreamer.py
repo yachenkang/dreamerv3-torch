@@ -23,12 +23,13 @@ from torch import distributions as torchd
 
 import wandb
 import datetime
+import random
 
 to_np = lambda x: x.detach().cpu().numpy()
 
 
 class Dreamer(nn.Module):
-    def __init__(self, obs_space, act_space, config, logger, dataset, mf_envs):
+    def __init__(self, obs_space, act_space, config, logger, dataset):
         super(Dreamer, self).__init__()
         self._config = config
         self._logger = logger
@@ -67,7 +68,7 @@ class Dreamer(nn.Module):
                 else self._should_train(step)
             )
             for _ in range(steps):
-                self._train(next(self._dataset), mf)
+                self._train(next(self._dataset))
                 self._update_count += 1
                 self._metrics["update_count"] = self._update_count
             if self._should_log(step):
@@ -78,6 +79,11 @@ class Dreamer(nn.Module):
                     openl = self._wm.video_pred(next(self._dataset))
                     self._logger.video("train_openl", to_np(openl))
                 self._logger.write(fps=True)
+
+            if random.random() < self._config.mf_sample_prob:
+                mf = True
+            else:
+                mf = False
 
         policy_output, state = self._policy(obs, state, training, mf)
 
@@ -123,7 +129,7 @@ class Dreamer(nn.Module):
         state = (latent, action)
         return policy_output, state
 
-    def _train(self, data, mf):
+    def _train(self, data):
         metrics = {}
         post, context, mets = self._wm._train(data)
         metrics.update(mets)
@@ -132,7 +138,7 @@ class Dreamer(nn.Module):
             self._wm.dynamics.get_feat(s)
         ).mode()
         metrics.update(self._task_behavior._train(start, reward)[-1])
-        # metrics.update(self._mf_behavior._train(start, data)[-1])
+        metrics.update(self._mf_behavior._train(start, data)[-1])
         if self._config.expl_behavior != "greedy":
             mets = self._expl_behavior.train(start, context, data)[-1]
             metrics.update({"expl_" + key: value for key, value in mets.items()})
@@ -256,15 +262,12 @@ def main(config):
     eval_eps = tools.load_episodes(directory, limit=1)
     make = lambda mode, id: make_env(config, mode, id)
     train_envs = [make("train", i) for i in range(config.envs)]
-    train_mf_envs = [make("train_mf", i) for i in range(1)]
     eval_envs = [make("eval", i) for i in range(config.envs)]
     if config.parallel:
         train_envs = [Parallel(env, "process") for env in train_envs]
-        train_mf_envs = [Parallel(env, "process") for env in train_mf_envs]
         eval_envs = [Parallel(env, "process") for env in eval_envs]
     else:
         train_envs = [Damy(env) for env in train_envs]
-        train_mf_envs = [Damy(env) for env in train_mf_envs]
         eval_envs = [Damy(env) for env in eval_envs]
     acts = train_envs[0].action_space
     print("Action Space", acts)
@@ -300,6 +303,7 @@ def main(config):
             logger,
             limit=config.dataset_size,
             steps=prefill,
+            policy_name="mb",
         )
         logger.step += prefill * config.action_repeat
         print(f"Logger: ({logger.step} steps).")
@@ -313,7 +317,6 @@ def main(config):
         config,
         logger,
         train_dataset,
-        train_mf_envs,
     ).to(config.device)
     agent.requires_grad_(requires_grad=False)
     if (logdir / "latest.pt").exists():
@@ -327,6 +330,8 @@ def main(config):
         logger.write()
         if config.eval_episode_num > 0:
             print("Start evaluation.")
+
+            # mb_policy eval
             eval_policy = functools.partial(agent, training=False)
             tools.simulate(
                 eval_policy,
@@ -338,9 +343,8 @@ def main(config):
                 episodes=config.eval_episode_num,
                 policy_name="mb",
             )
-            if config.video_pred_log:
-                video_pred = agent._wm.video_pred(next(eval_dataset))
-                logger.video("eval_openl", to_np(video_pred))
+
+            # mf_policy eval
             eval_policy = functools.partial(agent, training=False, mf=True)
             tools.simulate(
                 eval_policy,
@@ -353,6 +357,11 @@ def main(config):
                 policy_name="mf",
                 mf=True,
             )
+
+            if config.video_pred_log:
+                video_pred = agent._wm.video_pred(next(eval_dataset))
+                logger.video("eval_openl", to_np(video_pred))
+    
         print("Start training.")
         state = tools.simulate(
             agent,
@@ -361,7 +370,7 @@ def main(config):
             config.traindir,
             logger,
             limit=config.dataset_size,
-            steps=config.eval_every//2,
+            steps=config.eval_every,
             state=state,
             policy_name="mb",
             training=True,
@@ -371,18 +380,6 @@ def main(config):
             "optims_state_dict": tools.recursively_collect_optim_state_dict(agent),
         }
         torch.save(items_to_save, logdir / "latest.pt")
-        tools.simulate(
-            agent,
-            train_envs,
-            train_eps,
-            config.traindir,
-            logger,
-            limit=config.dataset_size,
-            steps=config.eval_every//2,
-            state=None,
-            policy_name="mf",
-            mf=True,
-        )
     for env in train_envs + eval_envs:
         try:
             env.close()

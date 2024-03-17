@@ -29,7 +29,7 @@ defaults:
   prefill: 2500
   reward_EMA: True
 
-  group: '1'
+  group: '2'
 
   # Model
   dyn_hidden: 512
@@ -78,10 +78,14 @@ defaults:
   discount: 0.997
   discount_lambda: 0.95
   imag_horizon: 15
-  inter_horizon: 15
   imag_gradient: 'dynamics'
   imag_gradient_mix: 0.0
   eval_state_mean: False
+
+  # MF Behavior
+  mf_sample_prob: 0.2
+  mf_gradient: 'td3'
+  mf_policy_freq: 2
 
   # Exploration
   expl_behavior: 'greedy'

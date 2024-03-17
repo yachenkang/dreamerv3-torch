@@ -221,9 +221,9 @@ def simulate(
                 if not is_eval:
                     step_in_dataset = erase_over_episodes(cache, limit)
                     logger.scalar(f"dataset_size", step_in_dataset)
-                    logger.scalar(f"train_return", score)
-                    logger.scalar(f"train_length", length)
-                    logger.scalar(f"train_episodes", len(cache))
+                    logger.scalar(policy_name + f"_train_return", score)
+                    logger.scalar(policy_name + f"_train_length", length)
+                    logger.scalar(policy_name + f"_train_episodes", len(cache))
                     logger.write(step=logger.step)
                 else:
                     if not "eval_lengths" in locals():
