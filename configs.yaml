@@ -85,7 +85,10 @@ defaults:
   # MF Behavior
   mf_sample_prob: 0.2
   mf_gradient: 'td3'
+  mf_data_times: 5
   mf_policy_freq: 2
+  mf_reg: True
+  mf_reg_scale: 0.1
 
   # Exploration
   expl_behavior: 'greedy'

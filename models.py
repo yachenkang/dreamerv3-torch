@@ -286,6 +286,7 @@ class ImagBehavior(nn.Module):
         self,
         start,
         objective,
+        mf_policy
     ):
         self._update_slow_target()
         metrics = {}
@@ -310,6 +311,11 @@ class ImagBehavior(nn.Module):
                     base,
                 )
                 actor_loss -= self._config.actor["entropy"] * actor_ent[:-1, ..., None]
+
+                if self._config.mf_reg:
+                    inp = imag_feat[:-1].detach()
+                    actor_loss += torch.distributions.kl.kl_divergence(self.actor(inp)._dist, mf_policy(inp)._dist)[:,:,None] * self._config.mf_reg_scale
+
                 actor_loss = torch.mean(actor_loss)
                 metrics.update(mets)
                 value_input = imag_feat

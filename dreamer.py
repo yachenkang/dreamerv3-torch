@@ -137,8 +137,17 @@ class Dreamer(nn.Module):
         reward = lambda f, s, a: self._wm.heads["reward"](
             self._wm.dynamics.get_feat(s)
         ).mode()
-        metrics.update(self._task_behavior._train(start, reward)[-1])
-        metrics.update(self._mf_behavior._train(start, data)[-1])
+        metrics.update(self._task_behavior._train(start, reward, self._mf_behavior.actor)[-1])
+
+        # mf_policy train
+        mf_data_list = []
+        for _ in range(self._config.mf_data_times):
+            mf_data_list.append(next(self._dataset))
+        mf_data = {}
+        for key in mf_data_list[0].keys():
+            mf_data[key] = np.concatenate([data[key] for data in mf_data_list], 0)
+        metrics.update(self._mf_behavior._train(start, mf_data)[-1])
+
         if self._config.expl_behavior != "greedy":
             mets = self._expl_behavior.train(start, context, data)[-1]
             metrics.update({"expl_" + key: value for key, value in mets.items()})
@@ -361,7 +370,7 @@ def main(config):
             if config.video_pred_log:
                 video_pred = agent._wm.video_pred(next(eval_dataset))
                 logger.video("eval_openl", to_np(video_pred))
-    
+
         print("Start training.")
         state = tools.simulate(
             agent,
